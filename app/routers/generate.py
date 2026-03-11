@@ -1,6 +1,8 @@
-"""内容生成路由 — 摘要/FAQ/学习指南/时间线"""
+"""内容生成路由 — 摘要/FAQ/学习指南/时间线/翻译"""
 
+import asyncio
 import json
+import re
 import uuid
 
 from fastapi import APIRouter, HTTPException
@@ -10,6 +12,18 @@ from app.database import get_conn
 from app.models import GenerateRequest, GeneratedContentOut, SaveNoteRequest
 
 router = APIRouter(tags=["generate"])
+
+
+async def _stream_with_timeout(aiter, timeout: float):
+    """给 async generator 的每次 next 加超时保护。
+    如果某次 next 超过 timeout 秒未返回，抛出 asyncio.TimeoutError。"""
+    ait = aiter.__aiter__()
+    while True:
+        try:
+            token = await asyncio.wait_for(ait.__anext__(), timeout=timeout)
+            yield token
+        except StopAsyncIteration:
+            break
 
 GENERATE_PROMPTS = {
     "summary": {
@@ -28,7 +42,60 @@ GENERATE_PROMPTS = {
         "title": "时间线",
         "prompt": "请根据以下文档内容，提取所有关键事件和时间节点，按时间顺序排列生成一份时间线。如果没有明确的时间信息，按逻辑顺序排列。使用 Markdown 格式。",
     },
+    "translate": {
+        "title": "中文翻译",
+        "prompt": "请将以下文档内容完整、准确地翻译为中文。要求：\n1. 保持原文的标题层级、列表、代码块等 Markdown 格式结构\n2. 专业术语翻译准确，首次出现时在括号内附注英文原文\n3. 数学公式保持 LaTeX 格式不翻译\n4. 译文应通顺自然，符合中文表达习惯\n5. 不要遗漏任何内容，完整翻译全文\n6. 文本中的 <!-- PAGE:N --> 标记是页码分隔符，请原样保留在翻译结果中，不要翻译或删除",
+    },
 }
+
+
+def _split_text_into_chunks(text: str, max_chars: int = 6000) -> list[str]:
+    """按段落边界切分文本为多段，每段不超过 max_chars"""
+    paragraphs = text.split("\n\n")
+    chunks = []
+    current = ""
+    for para in paragraphs:
+        if current and len(current) + len(para) + 2 > max_chars:
+            chunks.append(current.strip())
+            current = ""
+        current += para + "\n\n"
+    if current.strip():
+        chunks.append(current.strip())
+    return chunks
+
+
+_SKIP_TITLE_WORDS = {
+    "preprint", "abstract", "introduction", "contents", "table of contents",
+    "acknowledgments", "acknowledgements", "references", "appendix",
+    "copyright", "draft", "manuscript", "arxiv", "submitted",
+}
+
+
+def _extract_title(text: str) -> str:
+    """从文档文本中提取标题（跳过无意义的首行如 Preprint）"""
+    candidates = []
+    for line in text.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        # 跳过页码标记
+        if line.startswith("<!-- PAGE:"):
+            continue
+        # 跳过文档分隔线 --- filename ---
+        if line.startswith("---") and line.endswith("---"):
+            continue
+        # 去掉 Markdown 标题标记
+        cleaned = re.sub(r"^#+\s*", "", line).strip()
+        if not cleaned:
+            continue
+        # 跳过太短 (<=3字符) 或无意义的行
+        if cleaned.lower() in _SKIP_TITLE_WORDS:
+            continue
+        if len(cleaned) <= 3:
+            continue
+        # 截断过长标题
+        return cleaned[:80] if len(cleaned) > 80 else cleaned
+    return "中文翻译"
 
 
 @router.post("/notebooks/{notebook_id}/generate")
@@ -47,7 +114,7 @@ async def generate_content(notebook_id: str, body: GenerateRequest):
         raise HTTPException(status_code=404, detail="笔记本不存在")
 
     docs = conn.execute(
-        "SELECT filename, full_text FROM documents WHERE notebook_id = ? AND status = 'ready'",
+        "SELECT filename, full_text, file_path, file_type FROM documents WHERE notebook_id = ? AND status = 'ready'",
         (notebook_id,),
     ).fetchall()
     conn.close()
@@ -55,23 +122,102 @@ async def generate_content(notebook_id: str, body: GenerateRequest):
     if not docs:
         raise HTTPException(status_code=400, detail="笔记本中没有已就绪的文档")
 
-    # 构建完整文档内容（截断以适应上下文窗口）
+    # 构建完整文档内容
     doc_content = ""
-    for doc in docs:
-        doc_content += f"\n\n--- {doc['filename']} ---\n{doc['full_text']}"
+    if body.type == "translate":
+        # 翻译模式：使用带页码标记的文本
+        from app.services.document_parser import parse_document_with_pages
+        for doc in docs:
+            file_path = doc["file_path"] if "file_path" in doc.keys() else None
+            file_type = doc["file_type"] if "file_type" in doc.keys() else None
+            if file_path and file_type:
+                paged_text = parse_document_with_pages(file_path, file_type)
+                doc_content += f"\n\n--- {doc['filename']} ---\n{paged_text}"
+            else:
+                doc_content += f"\n\n--- {doc['filename']} ---\n{doc['full_text']}"
+    else:
+        for doc in docs:
+            doc_content += f"\n\n--- {doc['filename']} ---\n{doc['full_text']}"
 
-    # 截断到约 30000 字符（大约 30k tokens 中文）
+    gen_config = GENERATE_PROMPTS[body.type]
+    llm = LLMService(config.llm_base_url, config.llm_api_key, config.llm_model)
+    content_id = uuid.uuid4().hex[:12]
+
+    # 翻译模式：分段翻译，每段独立调用 LLM，带超时和错误恢复
+    if body.type == "translate":
+        # 提取文章标题
+        article_title = _extract_title(doc_content)
+        text_chunks = _split_text_into_chunks(doc_content, max_chars=6000)
+        total = len(text_chunks)
+        MAX_RETRIES = 2  # 每段最多重试 2 次
+
+        async def translate_stream():
+            full_response = ""
+            try:
+                for i, chunk_text in enumerate(text_chunks):
+                    # 进度提示
+                    progress_msg = f"\n\n---\n**[翻译进度: {i+1}/{total}]**\n\n"
+                    if i > 0:
+                        full_response += progress_msg
+                        yield f"data: {json.dumps({'type': 'chunk', 'content': progress_msg}, ensure_ascii=False)}\n\n"
+
+                    messages = [
+                        {"role": "system", "content": gen_config["prompt"]},
+                        {"role": "user", "content": chunk_text},
+                    ]
+
+                    chunk_success = False
+                    for retry in range(MAX_RETRIES + 1):
+                        try:
+                            chunk_response = ""
+                            async for token in _stream_with_timeout(
+                                llm.chat_stream(messages, temperature=0.3),
+                                timeout=60.0,  # 每个 token 最多等 60 秒
+                            ):
+                                chunk_response += token
+                                full_response += token
+                                yield f"data: {json.dumps({'type': 'chunk', 'content': token}, ensure_ascii=False)}\n\n"
+                            chunk_success = True
+                            break
+                        except asyncio.TimeoutError:
+                            warn_msg = f"\n\n> ⚠️ 第 {i+1} 段翻译超时"
+                            if retry < MAX_RETRIES:
+                                warn_msg += f"，正在重试 ({retry+1}/{MAX_RETRIES})...\n\n"
+                            else:
+                                warn_msg += "，已跳过此段。\n\n"
+                            full_response += warn_msg
+                            yield f"data: {json.dumps({'type': 'chunk', 'content': warn_msg}, ensure_ascii=False)}\n\n"
+                        except Exception as chunk_err:
+                            warn_msg = f"\n\n> ⚠️ 第 {i+1} 段翻译出错: {str(chunk_err)[:100]}"
+                            if retry < MAX_RETRIES:
+                                warn_msg += f"，正在重试 ({retry+1}/{MAX_RETRIES})...\n\n"
+                            else:
+                                warn_msg += "，已跳过此段。\n\n"
+                            full_response += warn_msg
+                            yield f"data: {json.dumps({'type': 'chunk', 'content': warn_msg}, ensure_ascii=False)}\n\n"
+
+                # 保存
+                conn2 = get_conn()
+                conn2.execute(
+                    "INSERT INTO generated_content (id, notebook_id, content_type, title, content) VALUES (?,?,?,?,?)",
+                    (content_id, notebook_id, body.type, article_title, full_response),
+                )
+                conn2.commit()
+                conn2.close()
+                yield f"data: {json.dumps({'type': 'done', 'id': content_id, 'title': article_title}, ensure_ascii=False)}\n\n"
+            except Exception as e:
+                yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+
+        return StreamingResponse(translate_stream(), media_type="text/event-stream")
+
+    # 其他类型：单次调用（截断到 30000 字符）
     if len(doc_content) > 30000:
         doc_content = doc_content[:30000] + "\n\n[...文档内容过长，已截断...]"
 
-    gen_config = GENERATE_PROMPTS[body.type]
     messages = [
         {"role": "system", "content": gen_config["prompt"]},
         {"role": "user", "content": doc_content},
     ]
-
-    llm = LLMService(config.llm_base_url, config.llm_api_key, config.llm_model)
-    content_id = uuid.uuid4().hex[:12]
 
     async def event_stream():
         full_response = ""

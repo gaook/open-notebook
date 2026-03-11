@@ -92,24 +92,14 @@ export function renderChat(panel, notebookId, callbacks = {}) {
                 bubbleContent.innerHTML = renderMarkdown(fullText);
                 messagesContainer.scrollTop = messagesContainer.scrollHeight;
             },
-            onSources(sources) {
-                if (sources && sources.length > 0) {
-                    const sourcesDiv = el('div', { className: 'message-sources' });
-                    for (const src of sources) {
-                        sourcesDiv.appendChild(
-                            el('span', { className: 'source-chip', title: src.snippet },
-                                `📄 ${src.filename}`)
-                        );
-                    }
-                    assistantBubble.appendChild(sourcesDiv);
-                }
-            },
+            onSources() {},
             onDone() {
                 isStreaming = false;
                 sendBtn.disabled = false;
                 textarea.focus();
                 if (fullText) {
                     const actions = el('div', { className: 'message-actions' });
+                    actions.appendChild(createCopyBtn(fullText));
                     actions.appendChild(createSaveBtn(fullText));
                     assistantBubble.appendChild(actions);
                 }
@@ -123,6 +113,24 @@ export function renderChat(panel, notebookId, callbacks = {}) {
                 showToast(msg, 'error');
             },
         });
+    }
+
+    function createCopyBtn(msgContent) {
+        const btn = el('button', {
+            className: 'message-action-btn',
+            title: '复制到剪贴板',
+            onclick: async () => {
+                try {
+                    await navigator.clipboard.writeText(msgContent);
+                    btn.textContent = '已复制';
+                    showToast('已复制到剪贴板', 'info');
+                    setTimeout(() => { btn.textContent = '复制'; }, 1500);
+                } catch (e) {
+                    showToast('复制失败', 'error');
+                }
+            },
+        }, '复制');
+        return btn;
     }
 
     function createSaveBtn(msgContent) {
@@ -159,6 +167,7 @@ export function renderChat(panel, notebookId, callbacks = {}) {
         );
         if (role === 'assistant' && content) {
             const actions = el('div', { className: 'message-actions' });
+            actions.appendChild(createCopyBtn(content));
             actions.appendChild(createSaveBtn(content));
             msg.appendChild(actions);
         }
@@ -173,22 +182,6 @@ export function renderChat(panel, notebookId, callbacks = {}) {
             const { messages } = await getChatHistory(notebookId);
             for (const msg of messages) {
                 const bubble = addMessage(msg.role, msg.content);
-                // 添加来源标记
-                if (msg.role === 'assistant' && msg.sources) {
-                    try {
-                        const sources = JSON.parse(msg.sources);
-                        if (sources && sources.length > 0) {
-                            const sourcesDiv = el('div', { className: 'message-sources' });
-                            for (const src of sources) {
-                                sourcesDiv.appendChild(
-                                    el('span', { className: 'source-chip', title: src.snippet || '' },
-                                        `📄 ${src.filename}`)
-                                );
-                            }
-                            bubble.appendChild(sourcesDiv);
-                        }
-                    } catch (e) { /* ignore */ }
-                }
             }
         } catch (e) {
             // 静默处理

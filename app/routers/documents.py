@@ -153,6 +153,30 @@ async def upload_document(
     )
 
 
+@router.get("/notebooks/{notebook_id}/documents/images")
+def get_document_images(notebook_id: str):
+    """提取笔记本中所有 PDF 文档的图片"""
+    from app.services.document_parser import extract_pdf_images
+
+    conn = get_conn()
+    docs = conn.execute(
+        "SELECT file_path, filename, file_type FROM documents WHERE notebook_id = ? AND status = 'ready'",
+        (notebook_id,),
+    ).fetchall()
+    conn.close()
+
+    all_images = []
+    for doc in docs:
+        if doc["file_type"] == "pdf":
+            fp = Path(doc["file_path"])
+            if fp.exists():
+                imgs = extract_pdf_images(str(fp))
+                for img in imgs:
+                    img["filename"] = doc["filename"]
+                all_images.extend(imgs)
+    return {"images": all_images}
+
+
 @router.delete("/notebooks/{notebook_id}/documents/{doc_id}")
 def delete_document(notebook_id: str, doc_id: str):
     from app.main import vector_store

@@ -122,6 +122,10 @@ export async function clearChatHistory(notebookId) {
     return request(`/notebooks/${notebookId}/chat/history`, { method: 'DELETE' });
 }
 
+export async function getDocumentImages(notebookId) {
+    return request(`/notebooks/${notebookId}/documents/images`);
+}
+
 // ---- 内容生成 ----
 export function generateContent(notebookId, type, callbacks) {
     const controller = new AbortController();

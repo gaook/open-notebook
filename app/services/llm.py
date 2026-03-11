@@ -35,7 +35,7 @@ class LLMService:
             "temperature": temperature,
         }
 
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=300.0) as client:
             async with client.stream(
                 "POST",
                 f"{self.base_url}/chat/completions",
