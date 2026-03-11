@@ -58,7 +58,7 @@ def init_db(data_dir: str):
             id           TEXT PRIMARY KEY,
             notebook_id  TEXT NOT NULL REFERENCES notebooks(id) ON DELETE CASCADE,
             content_type TEXT NOT NULL
-                         CHECK(content_type IN ('summary', 'faq', 'study_guide', 'timeline')),
+                         CHECK(content_type IN ('summary', 'faq', 'study_guide', 'timeline', 'note')),
             title        TEXT NOT NULL,
             content      TEXT NOT NULL,
             created_at   TEXT NOT NULL DEFAULT (datetime('now'))
@@ -67,6 +67,29 @@ def init_db(data_dir: str):
         CREATE INDEX IF NOT EXISTS idx_generated_notebook
             ON generated_content(notebook_id);
     """)
+
+    # 迁移：如果旧表没有 'note' 类型，重建表
+    try:
+        conn.execute("INSERT INTO generated_content (id, notebook_id, content_type, title, content) VALUES ('_test', '_', 'note', '', '')")
+        conn.execute("DELETE FROM generated_content WHERE id = '_test'")
+    except sqlite3.IntegrityError:
+        # 旧 CHECK 约束不包含 'note'，需要重建
+        conn.executescript("""
+            ALTER TABLE generated_content RENAME TO _gc_old;
+            CREATE TABLE generated_content (
+                id           TEXT PRIMARY KEY,
+                notebook_id  TEXT NOT NULL REFERENCES notebooks(id) ON DELETE CASCADE,
+                content_type TEXT NOT NULL
+                             CHECK(content_type IN ('summary', 'faq', 'study_guide', 'timeline', 'note')),
+                title        TEXT NOT NULL,
+                content      TEXT NOT NULL,
+                created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            INSERT INTO generated_content SELECT * FROM _gc_old;
+            DROP TABLE _gc_old;
+            CREATE INDEX IF NOT EXISTS idx_generated_notebook ON generated_content(notebook_id);
+        """)
+
     conn.close()
 
 

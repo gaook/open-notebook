@@ -12,6 +12,14 @@ const GENERATE_TYPES = [
     { type: 'timeline', icon: '📅', title: '时间线', desc: '按时间顺序整理事件' },
 ];
 
+const TYPE_ICONS = { summary: '📝', faq: '❓', study_guide: '📚', timeline: '📅', note: '💬' };
+
+let _refreshFn = null;
+
+export function refreshGenerated(notebookId) {
+    if (_refreshFn) _refreshFn();
+}
+
 export function renderGenerate(panel, notebookId) {
     panel.innerHTML = '';
 
@@ -110,10 +118,10 @@ export function renderGenerate(panel, notebookId) {
             listHeader.style.display = 'block';
 
             for (const item of items) {
-                const typeInfo = GENERATE_TYPES.find(t => t.type === item.content_type);
+                const icon = TYPE_ICONS[item.content_type] || '📄';
                 const itemEl = el('div', { className: 'generated-item' },
                     el('div', { className: 'generated-item-title' },
-                        `${typeInfo?.icon || '📄'} ${item.title}`
+                        `${icon} ${item.title}`
                     ),
                     el('div', {
                         className: 'generated-item-meta',
@@ -169,5 +177,6 @@ export function renderGenerate(panel, notebookId) {
         }
     }
 
+    _refreshFn = loadGenerated;
     loadGenerated();
 }

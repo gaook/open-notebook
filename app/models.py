@@ -58,6 +58,11 @@ class GenerateRequest(BaseModel):
     type: str  # summary | faq | study_guide | timeline
 
 
+class SaveNoteRequest(BaseModel):
+    title: str = "对话笔记"
+    content: str
+
+
 class GeneratedContentOut(BaseModel):
     id: str
     content_type: str

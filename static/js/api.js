@@ -185,6 +185,13 @@ export async function deleteGenerated(notebookId, itemId) {
     return request(`/notebooks/${notebookId}/generated/${itemId}`, { method: 'DELETE' });
 }
 
+export async function saveNote(notebookId, title, content) {
+    return request(`/notebooks/${notebookId}/generated/note`, {
+        method: 'POST',
+        body: JSON.stringify({ title, content }),
+    });
+}
+
 // ---- 设置 ----
 export async function getSettings() {
     return request('/settings');

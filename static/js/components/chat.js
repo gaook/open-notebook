@@ -2,10 +2,10 @@
  * 对话面板
  */
 
-import { getChatHistory, chatStream, clearChatHistory } from '../api.js';
+import { getChatHistory, chatStream, clearChatHistory, saveNote } from '../api.js';
 import { el, showToast, renderMarkdown } from '../utils.js';
 
-export function renderChat(panel, notebookId) {
+export function renderChat(panel, notebookId, callbacks = {}) {
     panel.innerHTML = '';
 
     const header = el('div', { className: 'panel-header' },
@@ -58,9 +58,9 @@ export function renderChat(panel, notebookId) {
         textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
     });
 
-    // Enter 发送，Shift+Enter 换行
+    // Shift+Enter 发送，Enter 换行
     textarea.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
+        if (e.key === 'Enter' && e.shiftKey) {
             e.preventDefault();
             sendMessage();
         }
@@ -108,6 +108,11 @@ export function renderChat(panel, notebookId) {
                 isStreaming = false;
                 sendBtn.disabled = false;
                 textarea.focus();
+                if (fullText) {
+                    const actions = el('div', { className: 'message-actions' });
+                    actions.appendChild(createSaveBtn(fullText));
+                    assistantBubble.appendChild(actions);
+                }
             },
             onError(msg) {
                 isStreaming = false;
@@ -120,6 +125,29 @@ export function renderChat(panel, notebookId) {
         });
     }
 
+    function createSaveBtn(msgContent) {
+        const btn = el('button', {
+            className: 'message-action-btn',
+            title: '保存为笔记',
+            onclick: async () => {
+                try {
+                    btn.disabled = true;
+                    btn.textContent = '保存中...';
+                    const title = '对话笔记 ' + new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+                    await saveNote(notebookId, title, msgContent);
+                    btn.textContent = '已保存';
+                    showToast('已保存为笔记', 'info');
+                    if (callbacks.onNoteSaved) callbacks.onNoteSaved();
+                } catch (e) {
+                    btn.disabled = false;
+                    btn.textContent = '保存为笔记';
+                    showToast(e.message, 'error');
+                }
+            },
+        }, '保存为笔记');
+        return btn;
+    }
+
     function addMessage(role, content) {
         const avatar = role === 'user' ? '我' : 'AI';
         const msg = el('div', { className: `message ${role}` },
@@ -129,6 +157,11 @@ export function renderChat(panel, notebookId) {
                 innerHTML: content ? renderMarkdown(content) : '<span class="loading-dots">思考中</span>',
             })
         );
+        if (role === 'assistant' && content) {
+            const actions = el('div', { className: 'message-actions' });
+            actions.appendChild(createSaveBtn(content));
+            msg.appendChild(actions);
+        }
         messagesContainer.appendChild(msg);
         messagesContainer.scrollTop = messagesContainer.scrollHeight;
         return msg;

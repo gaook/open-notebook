@@ -34,7 +34,8 @@ def get_chat_history(notebook_id: str, limit: int = 50):
 
 @router.post("/notebooks/{notebook_id}/chat")
 async def chat(notebook_id: str, body: ChatRequest):
-    from app.main import config, vector_store, embedding_service
+    from app.main import config, vector_store, get_embedding_service
+    embedding_service = get_embedding_service()
     from app.services.retriever import Retriever
     from app.services.llm import LLMService
 

@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
 from app.database import get_conn
-from app.models import GenerateRequest, GeneratedContentOut
+from app.models import GenerateRequest, GeneratedContentOut, SaveNoteRequest
 
 router = APIRouter(tags=["generate"])
 
@@ -134,6 +134,23 @@ def get_generated(notebook_id: str, item_id: str):
         content=row["content"],
         created_at=row["created_at"],
     )
+
+
+@router.post("/notebooks/{notebook_id}/generated/note")
+def save_note(notebook_id: str, body: SaveNoteRequest):
+    conn = get_conn()
+    nb = conn.execute("SELECT id FROM notebooks WHERE id = ?", (notebook_id,)).fetchone()
+    if not nb:
+        conn.close()
+        raise HTTPException(status_code=404, detail="笔记本不存在")
+    note_id = uuid.uuid4().hex[:12]
+    conn.execute(
+        "INSERT INTO generated_content (id, notebook_id, content_type, title, content) VALUES (?,?,?,?,?)",
+        (note_id, notebook_id, "note", body.title, body.content),
+    )
+    conn.commit()
+    conn.close()
+    return {"id": note_id, "success": True}
 
 
 @router.delete("/notebooks/{notebook_id}/generated/{item_id}")

@@ -3,18 +3,49 @@
  */
 
 /**
- * 渲染 Markdown 为 HTML
+ * 渲染 Markdown + LaTeX 数学公式为 HTML
+ * 流程：提取数学公式 → marked 渲染 Markdown → 还原 KaTeX 渲染结果
  */
 export function renderMarkdown(text) {
-    if (typeof marked !== 'undefined') {
-        return marked.parse(text || '');
+    if (!text) return '';
+
+    const mathBlocks = [];
+    let processed = text;
+
+    if (typeof katex !== 'undefined') {
+        // 1) 显示公式 $$...$$ (含换行)
+        processed = processed.replace(/\$\$([\s\S]+?)\$\$/g, (_, expr) => {
+            const placeholder = `\x00MATH${mathBlocks.length}\x00`;
+            try {
+                mathBlocks.push(katex.renderToString(expr.trim(), { displayMode: true, throwOnError: false }));
+            } catch { mathBlocks.push(`<code>${expr}</code>`); }
+            return placeholder;
+        });
+        // 2) 行内公式 $...$ (不跨行，避免匹配货币符号)
+        processed = processed.replace(/\$([^\n$]+?)\$/g, (_, expr) => {
+            const placeholder = `\x00MATH${mathBlocks.length}\x00`;
+            try {
+                mathBlocks.push(katex.renderToString(expr.trim(), { displayMode: false, throwOnError: false }));
+            } catch { mathBlocks.push(`<code>${expr}</code>`); }
+            return placeholder;
+        });
     }
-    // 简单回退：只处理基本格式
-    return (text || '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/\n/g, '<br>');
+
+    // Markdown 渲染
+    let html;
+    if (typeof marked !== 'undefined') {
+        html = marked.parse(processed);
+    } else {
+        html = processed
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+    }
+
+    // 还原数学公式
+    for (let i = 0; i < mathBlocks.length; i++) {
+        html = html.replace(`\x00MATH${i}\x00`, mathBlocks[i]);
+    }
+    return html;
 }
 
 /**

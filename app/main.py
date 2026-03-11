@@ -16,10 +16,19 @@ vector_store = None
 embedding_service = None
 
 
+def get_embedding_service():
+    """延迟加载嵌入模型（首次调用时加载）"""
+    global embedding_service
+    if embedding_service is None:
+        from app.services.embeddings import create_embedding_service
+        embedding_service = create_embedding_service(config)
+    return embedding_service
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期：启动时初始化，关闭时清理"""
-    global config, vector_store, embedding_service
+    global config, vector_store
 
     config = load_config()
 
@@ -36,9 +45,7 @@ async def lifespan(app: FastAPI):
     from app.services.vector_store import VectorStore
     vector_store = VectorStore(str(data_dir / "chroma"))
 
-    # 初始化嵌入服务
-    from app.services.embeddings import create_embedding_service
-    embedding_service = create_embedding_service(config)
+    # 嵌入模型延迟加载，不阻塞启动
 
     yield
 

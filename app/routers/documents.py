@@ -34,7 +34,8 @@ def _process_document(doc_id: str, notebook_id: str, file_path: str, file_type: 
     """后台任务：解析、分块、嵌入文档"""
     from app.services.document_parser import parse_document
     from app.services.chunker import chunk_text
-    from app.main import config, vector_store, embedding_service
+    from app.main import config, vector_store, get_embedding_service
+    embedding_service = get_embedding_service()
 
     conn = get_conn()
     try:
