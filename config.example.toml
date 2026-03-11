@@ -1,0 +1,28 @@
+[llm]
+base_url = "http://localhost:11434/v1"   # Ollama 默认地址
+api_key = ""                              # Ollama 不需要 key
+model = "qwen2.5:7b"                     # 模型名称
+
+# OpenAI 示例:
+# base_url = "https://api.openai.com/v1"
+# api_key = "sk-..."
+# model = "gpt-4o-mini"
+
+[embedding]
+provider = "local"                        # "local" 或 "api"
+model = "paraphrase-multilingual-MiniLM-L12-v2"
+
+# API 嵌入示例:
+# provider = "api"
+# base_url = "https://api.openai.com/v1"
+# api_key = "sk-..."
+# model = "text-embedding-3-small"
+
+[server]
+host = "127.0.0.1"
+port = 8000
+
+[rag]
+chunk_size = 512
+chunk_overlap = 64
+top_k = 5
