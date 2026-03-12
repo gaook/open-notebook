@@ -230,9 +230,11 @@ ${bodyHtml}
                 const titleSpan = el('span', {}, `${icon} ${currentTitle}`);
                 const titleDiv = el('div', { className: 'generated-item-title' }, titleSpan);
 
-                // 双击标题进入编辑模式
-                titleSpan.addEventListener('dblclick', (e) => {
+                // 双击标题进入编辑模式；单击整卡片打开内容（延迟以区分双击）
+                let clickTimer = null;
+                titleDiv.addEventListener('dblclick', (e) => {
                     e.stopPropagation();
+                    if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
                     const input = el('input', {
                         type: 'text',
                         value: currentTitle,
@@ -286,7 +288,13 @@ ${bodyHtml}
                         }, '删除')
                     )
                 );
-                itemEl.addEventListener('click', () => showGeneratedContent(notebookId, item.id, currentTitle));
+                itemEl.addEventListener('click', () => {
+                    if (clickTimer) return;
+                    clickTimer = setTimeout(() => {
+                        clickTimer = null;
+                        showGeneratedContent(notebookId, item.id, currentTitle);
+                    }, 250);
+                });
                 generatedList.appendChild(itemEl);
             }
         } catch (e) {
