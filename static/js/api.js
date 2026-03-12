@@ -196,6 +196,13 @@ export async function saveNote(notebookId, title, content) {
     });
 }
 
+export async function updateGeneratedTitle(notebookId, itemId, title) {
+    return request(`/notebooks/${notebookId}/generated/${itemId}/title`, {
+        method: 'PATCH',
+        body: JSON.stringify({ title }),
+    });
+}
+
 // ---- 设置 ----
 export async function getSettings() {
     return request('/settings');

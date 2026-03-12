@@ -63,6 +63,10 @@ class SaveNoteRequest(BaseModel):
     content: str
 
 
+class UpdateTitleRequest(BaseModel):
+    title: str
+
+
 class GeneratedContentOut(BaseModel):
     id: str
     content_type: str

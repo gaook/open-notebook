@@ -2,7 +2,7 @@
  * 内容生成面板
  */
 
-import { generateContent, listGenerated, getGenerated, deleteGenerated, getDocumentImages } from '../api.js';
+import { generateContent, listGenerated, getGenerated, deleteGenerated, updateGeneratedTitle, getDocumentImages } from '../api.js';
 import { el, showToast, renderMarkdown } from '../utils.js';
 
 const GENERATE_TYPES = [
@@ -225,10 +225,45 @@ ${bodyHtml}
 
             for (const item of items) {
                 const icon = TYPE_ICONS[item.content_type] || '📄';
+                let currentTitle = item.title;
+
+                const titleSpan = el('span', {}, `${icon} ${currentTitle}`);
+                const titleDiv = el('div', { className: 'generated-item-title' }, titleSpan);
+
+                // 双击标题进入编辑模式
+                titleSpan.addEventListener('dblclick', (e) => {
+                    e.stopPropagation();
+                    const input = el('input', {
+                        type: 'text',
+                        value: currentTitle,
+                        className: 'title-edit-input',
+                        style: { width: '100%', fontSize: '13px', padding: '2px 4px', border: '1px solid var(--primary)', borderRadius: '4px', outline: 'none' },
+                    });
+                    titleDiv.replaceChildren(el('span', {}, icon + ' '), input);
+                    input.focus();
+                    input.select();
+
+                    const save = async () => {
+                        const newTitle = input.value.trim();
+                        if (newTitle && newTitle !== currentTitle) {
+                            await updateGeneratedTitle(notebookId, item.id, newTitle);
+                            currentTitle = newTitle;
+                        }
+                        titleSpan.textContent = `${icon} ${currentTitle}`;
+                        titleDiv.replaceChildren(titleSpan);
+                    };
+                    input.addEventListener('blur', save);
+                    input.addEventListener('keydown', (ev) => {
+                        if (ev.key === 'Enter') input.blur();
+                        if (ev.key === 'Escape') {
+                            input.value = currentTitle;
+                            input.blur();
+                        }
+                    });
+                });
+
                 const itemEl = el('div', { className: 'generated-item' },
-                    el('div', { className: 'generated-item-title' },
-                        `${icon} ${item.title}`
-                    ),
+                    titleDiv,
                     el('div', {
                         className: 'generated-item-meta',
                         style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
@@ -251,7 +286,7 @@ ${bodyHtml}
                         }, '删除')
                     )
                 );
-                itemEl.addEventListener('click', () => showGeneratedContent(notebookId, item.id, item.title));
+                itemEl.addEventListener('click', () => showGeneratedContent(notebookId, item.id, currentTitle));
                 generatedList.appendChild(itemEl);
             }
         } catch (e) {

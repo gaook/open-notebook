@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
 from app.database import get_conn
-from app.models import GenerateRequest, GeneratedContentOut, SaveNoteRequest
+from app.models import GenerateRequest, GeneratedContentOut, SaveNoteRequest, UpdateTitleRequest
 
 router = APIRouter(tags=["generate"])
 
@@ -341,6 +341,18 @@ def save_note(notebook_id: str, body: SaveNoteRequest):
     conn.commit()
     conn.close()
     return {"id": note_id, "success": True}
+
+
+@router.patch("/notebooks/{notebook_id}/generated/{item_id}/title")
+def update_generated_title(notebook_id: str, item_id: str, body: UpdateTitleRequest):
+    conn = get_conn()
+    conn.execute(
+        "UPDATE generated_content SET title = ? WHERE id = ? AND notebook_id = ?",
+        (body.title.strip(), item_id, notebook_id),
+    )
+    conn.commit()
+    conn.close()
+    return {"success": True}
 
 
 @router.delete("/notebooks/{notebook_id}/generated/{item_id}")
