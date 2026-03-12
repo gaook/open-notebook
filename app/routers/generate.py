@@ -64,6 +64,39 @@ def _split_text_into_chunks(text: str, max_chars: int = 6000) -> list[str]:
     return chunks
 
 
+# 参考文献标题的常见写法
+_REFERENCES_PATTERNS = re.compile(
+    r"^(?:<!-- PAGE:\d+ -->\s*)?(?:Preprint\s*)?"
+    r"(REFERENCES|References|Bibliography|BIBLIOGRAPHY|参考文献)\s*$",
+    re.MULTILINE,
+)
+
+
+def _split_references(chunks: list[str]) -> list[dict]:
+    """标记每个段是否属于参考文献区域，返回 [{text, is_refs}]。
+
+    检测到 REFERENCES / Bibliography / 参考文献 标题后，该段及后续段
+    标记为 is_refs=True，直到遇到附录 (APPENDIX / Theorem Proofs 等) 恢复正常翻译。
+    """
+    result = []
+    in_refs = False
+    appendix_re = re.compile(
+        r"^(?:<!-- PAGE:\d+ -->\s*)?(?:Preprint\s*)?"
+        r"(APPENDI|Appendi|附录|THEOREM PROOFS|Theorem Proofs|"
+        r"SUPPLEMENTARY|Supplementary|A\s+THEOREM)",
+        re.MULTILINE,
+    )
+    for chunk in chunks:
+        if not in_refs and _REFERENCES_PATTERNS.search(chunk):
+            in_refs = True
+        if in_refs and appendix_re.search(chunk):
+            # 附录内容仍需翻译，但可能和参考文献混在同一段
+            # 简化处理：整段恢复翻译
+            in_refs = False
+        result.append({"text": chunk, "is_refs": in_refs})
+    return result
+
+
 _SKIP_TITLE_WORDS = {
     "preprint", "abstract", "introduction", "contents", "table of contents",
     "acknowledgments", "acknowledgements", "references", "appendix",
@@ -147,19 +180,30 @@ async def generate_content(notebook_id: str, body: GenerateRequest):
     if body.type == "translate":
         # 提取文章标题
         article_title = _extract_title(doc_content)
-        text_chunks = _split_text_into_chunks(doc_content, max_chars=6000)
-        total = len(text_chunks)
+        raw_chunks = _split_text_into_chunks(doc_content, max_chars=6000)
+        tagged_chunks = _split_references(raw_chunks)
+        total = len(tagged_chunks)
         MAX_RETRIES = 2  # 每段最多重试 2 次
 
         async def translate_stream():
             full_response = ""
             try:
-                for i, chunk_text in enumerate(text_chunks):
+                for i, chunk_info in enumerate(tagged_chunks):
+                    chunk_text = chunk_info["text"]
+                    is_refs = chunk_info["is_refs"]
+
                     # 进度提示
                     progress_msg = f"\n\n---\n**[翻译进度: {i+1}/{total}]**\n\n"
                     if i > 0:
                         full_response += progress_msg
                         yield f"data: {json.dumps({'type': 'chunk', 'content': progress_msg}, ensure_ascii=False)}\n\n"
+
+                    # 参考文献段：直接保留原文，不调用 LLM
+                    if is_refs:
+                        refs_note = "\n\n> 📚 **参考文献部分，保留原文**\n\n"
+                        full_response += refs_note + chunk_text
+                        yield f"data: {json.dumps({'type': 'chunk', 'content': refs_note + chunk_text}, ensure_ascii=False)}\n\n"
+                        continue
 
                     messages = [
                         {"role": "system", "content": gen_config["prompt"]},
